@@ -1,0 +1,24 @@
+# Binaries
+task_scheduler
+*.o
+*.out
+*.exe
+
+# Object files
+*.obj
+
+# Libraries
+*.a
+*.so
+*.dylib
+*.dll
+
+# IDE and Editor files
+.vscode/
+.idea/
+*.swp
+*~
+*.DS_Store
+
+# Environment variables
+.env
