@@ -87,8 +87,7 @@ class TaskScheduler {
         /**
          * @brief Initialize the scheduler with specific thread counts.
          */
-        TaskScheduler(int workers, int monitors) 
-            : num_workers(workers), num_monitors(monitors), stop(false) {}
+        TaskScheduler(int workers, int monitors);
         
         /**
          * @brief Cleans up threads and ensures a graceful shutdown.
