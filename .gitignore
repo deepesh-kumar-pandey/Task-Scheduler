@@ -1,4 +1,5 @@
 # Binaries
+main
 task_scheduler
 *.o
 *.out
@@ -22,3 +23,7 @@ task_scheduler
 
 # Environment variables
 .env
+
+# Benchmark artifacts
+benchmark_input.txt
+benchmark_log.txt
