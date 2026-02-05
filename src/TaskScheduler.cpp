@@ -1,103 +1,101 @@
-#include "TaskScheduler.h"
+#include "../include/TaskScheduler.h"
 #include <iostream>
 
-// Constructor: Initializes threads and the stop flag
-TaskScheduler::TaskScheduler(int workers, int monitors) 
-    : stop(false), num_workers(workers), num_monitors(monitors) {}
+TaskScheduler::TaskScheduler(int workers) 
+    : stop(false), num_workers(workers), task_counter(0) {
+    
+    // Initialize Shards
+    for(int i = 0; i < num_workers; ++i) {
+        shards.push_back(std::unique_ptr<WorkerQueue>(new WorkerQueue()));
+    }
+}
 
-// Destructor: Ensures we don't leave "Zombie Threads"
 TaskScheduler::~TaskScheduler() {
     Stop();
 }
 
 void TaskScheduler::Start() {
-    // 1. Launch Monitor threads (The "Watchers")
-    for (int i = 0; i < num_monitors; ++i) {
-        monitor_threads.emplace_back(&TaskScheduler::Monitor_queue, this);
-    }
-
-    // 2. Launch Worker threads (The "Doers")
+    // Launch Worker threads, each assigned to a specific shard
     for (int i = 0; i < num_workers; ++i) {
-        worker_threads.emplace_back(&TaskScheduler::Worker_thread, this);
+        worker_threads.emplace_back(&TaskScheduler::Worker_thread, this, i);
     }
+}
+
+void TaskScheduler::Schedule_task(Task&& task) {
+    size_t current_id = task_counter.fetch_add(1);
+    int shard_id = current_id % num_workers;
+
+    {
+        std::lock_guard<std::mutex> lock(shards[shard_id]->mutex_lock);
+        shards[shard_id]->task_queue.push(std::move(task));
+    }
+    shards[shard_id]->cv.notify_one();
 }
 
 void TaskScheduler::Schedule_task(const Task& task) {
-    {
-        std::lock_guard<std::mutex> lock(mutex_lock);
-        task_queue.push(task); 
-    }
-    // Signal the monitor that a new task is in the heap
-    cv_monitor.notify_one();
+    Task copy = task;
+    Schedule_task(std::move(copy));
 }
 
-void TaskScheduler::Monitor_queue() {
+void TaskScheduler::Worker_thread(int shard_id) {
+    WorkerQueue* my_shard = shards[shard_id].get();
+    std::vector<Task> ready_tasks;
+    ready_tasks.reserve(1000);
+
     while (true) {
-        std::unique_lock<std::mutex> lock(mutex_lock);
-
-        // Wait until there is a task OR the system stops
-        cv_monitor.wait(lock, [this] { 
-            return !task_queue.empty() || stop; 
-        });
-
-        if (stop) return;
-
-        auto now = std::chrono::system_clock::now();
-        const Task& topTask = task_queue.top();
-
-        if (topTask.execution_time <= now) {
-            // Task is due! Wake up a worker
-            cv_worker.notify_one();
-            // In a full implementation, we'd move this to a "Ready" queue
-            // For now, let's let the worker handle it directly
-            lock.unlock(); 
-        } else {
-            // Task isn't due yet. Sleep until it is.
-            cv_monitor.wait_until(lock, topTask.execution_time);
-        }
-    }
-}
-
-void TaskScheduler::Worker_thread() {
-    while (true) {
-        Task current_task;
+        ready_tasks.clear();
         {
-            std::unique_lock<std::mutex> lock(mutex_lock);
+            std::unique_lock<std::mutex> lock(my_shard->mutex_lock);
             
-            // Wait for a task that is actually ready to run
-            cv_worker.wait(lock, [this] {
-                return (!task_queue.empty() && 
-                        task_queue.top().execution_time <= std::chrono::system_clock::now()) 
-                        || stop;
+            my_shard->cv.wait(lock, [this, my_shard] { 
+                return stop || !my_shard->task_queue.empty(); 
             });
 
-            if (stop && task_queue.empty()) return;
+            if (stop && my_shard->task_queue.empty()) return;
 
-            // Grab the task from our Min-Heap
-            current_task = std::move(const_cast<Task&>(task_queue.top()));
-            task_queue.pop();
+            while (!my_shard->task_queue.empty()) {
+                const Task& topTask = my_shard->task_queue.top();
+                auto now = std::chrono::system_clock::now();
+
+                if (topTask.execution_time > now) {
+                    if (ready_tasks.empty()) {
+                        auto wake_time = topTask.execution_time;
+                        my_shard->cv.wait_until(lock, wake_time);
+                        break; 
+                    } else {
+                        break; 
+                    }
+                }
+
+                ready_tasks.push_back(std::move(const_cast<Task&>(my_shard->task_queue.top())));
+                my_shard->task_queue.pop();
+                
+                if (ready_tasks.size() >= 1000) break;
+            }
         }
 
-        // Execute the logic stored in std::function
-        if (current_task.task_logic) {
-            try {
-                current_task.task_logic();
-            } catch (const std::exception& e) {
-                std::cerr << "Task failed: " << e.what() << std::endl;
+        for (auto& task : ready_tasks) {
+            if (task.task_logic) {
+                try {
+                    task.task_logic();
+                } catch (const std::exception& e) {
+                    std::cerr << "Task failed: " << e.what() << std::endl;
+                }
             }
         }
     }
 }
 
 void TaskScheduler::Stop() {
-    {
-        std::lock_guard<std::mutex> lock(mutex_lock);
-        stop = true;
+    stop = true;
+    
+    // Wake up all workers so they can exit
+    for(auto& shard : shards) {
+        std::lock_guard<std::mutex> lock(shard->mutex_lock);
+        shard->cv.notify_all();
     }
-    // Wake up everyone so they can see the 'stop' flag and exit
-    cv_monitor.notify_all();
-    cv_worker.notify_all();
 
-    for (auto& t : monitor_threads) if (t.joinable()) t.join();
-    for (auto& t : worker_threads) if (t.joinable()) t.join();
+    for (auto& t : worker_threads) {
+        if (t.joinable()) t.join();
+    }
 }
