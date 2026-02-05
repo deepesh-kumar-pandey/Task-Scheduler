@@ -76,18 +76,13 @@ chmod +x benchmark.sh
 ./benchmark.sh
 ```
 
-### Expected Results (Sample)
+### ### Benchmark Results (300,000 Tasks)
 
-```text
-Generating 300000 tasks...
-Starting benchmark...
-This may take a while depending on your CPU.
-Benchmark completed.
-Total Tasks Scheduled: 300000
-Total Time: 3s (3450ms)
-Throughput: 87000 tasks/sec
-Avg Latency: 11 us/task
-Input file cleaned up.
-```
+| Metric          | Optimized Result     |
+| :-------------- | :------------------- |
+| **Total Tasks** | 300,000              |
+| **Total Time**  | 3s (3450ms)          |
+| **Throughput**  | **87,000 tasks/sec** |
+| **Avg Latency** | **11 us/task**       |
 
 _Performance depends on system hardware. The above result was observed on a high-concurrency system with optimized move semantics and batching._
