@@ -76,7 +76,7 @@ chmod +x benchmark.sh
 ./benchmark.sh
 ```
 
-### ### Benchmark Results (300,000 Tasks)
+### Benchmark Results (300,000 Tasks)
 
 | Metric          | Optimized Result     |
 | :-------------- | :------------------- |
