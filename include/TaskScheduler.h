@@ -9,6 +9,8 @@
 #include <thread>
 #include <functional>
 #include <chrono>
+#include <atomic>
+#include <memory>
 
 /**
  * @brief Represents the current lifecycle stage of a scheduled task.
@@ -48,69 +50,56 @@ struct Task {
             return t1.execution_time > t2.execution_time;
         }
     };
+
+    // Move semantics support
+    Task() = default;
+    Task(Task&&) = default;
+    Task& operator=(Task&&) = default;
+    Task(const Task&) = default;
+    Task& operator=(const Task&) = default;
 };
 
 class TaskScheduler {
     private:
-        // Synchronization primitives for thread-safe queue access
-        std::mutex mutex_lock;
+        // Structure representing a single shard (Queue + Lock + CV)
+        struct WorkerQueue {
+            std::mutex mutex_lock;
+            std::priority_queue<Task, std::vector<Task>, Task::CompareTimestamp> task_queue;
+            std::condition_variable cv;
+        };
 
-        /**
-         * @brief EXPLICIT MIN-HEAP IMPLEMENTATION
-         * std::priority_queue<Type, Container, Comparator>
-         * This ensures the task with the smallest execution_time is always at the top.
-         */
-        std::priority_queue<Task, std::vector<Task>, Task::CompareTimestamp> task_queue;
+        // Tasks are distributed among these shards
+        // Using unique_ptr because mutexes are not copyable/movable
+        std::vector<std::unique_ptr<WorkerQueue>> shards;
         
-        // Signals to wake up threads (Monitor checks time, Workers check for tasks)
-        std::condition_variable cv_worker;
-        std::condition_variable cv_monitor;
-        
-        // Thread pools for background processing
+        // Thread pool
         std::vector<std::thread> worker_threads;
-        std::vector<std::thread> monitor_threads;
         
-        // Atomic-style flag to trigger graceful shutdown
+        // Atomic flag for shutdown
         bool stop;
-
-        // Internal loop: Checks if tasks in the queue have reached their execution_time
-        void Monitor_queue();
         
-        // Internal loop: Consumes ready tasks and executes their logic
-        void Worker_thread();
+        // Internal Worker loop: Manages its own designated shard
+        void Worker_thread(int shard_id);
 
-        // Private members to store thread counts
+        // Atomic counter for Round-Robin scheduling
+        std::atomic<size_t> task_counter;
+
         int num_workers;
-        int num_monitors;
 
     public:
         /**
          * @brief Initialize the scheduler with specific thread counts.
          */
-        TaskScheduler(int workers, int monitors);
+        TaskScheduler(int workers); // Monitors arg removed as not needed
         
-        /**
-         * @brief Cleans up threads and ensures a graceful shutdown.
-         */
         ~TaskScheduler();
 
-        // Disable Copy Constructor and Assignment Operator (Singleton/Resource Management)
         TaskScheduler(const TaskScheduler& other) = delete;
         TaskScheduler& operator=(const TaskScheduler& other) = delete;
 
-        /**
-         * @brief Adds a new task to the internal priority queue.
-         */
+        void Schedule_task(Task&& task);
         void Schedule_task(const Task& task);
-        
-        /**
-         * @brief Spawns the monitor and worker threads to begin processing.
-         */
         void Start();
-        
-        /**
-         * @brief Signals all threads to stop and joins them.
-         */
         void Stop();
 }; // End of class
 
